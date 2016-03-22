@@ -1,12 +1,8 @@
 #pragma once
 
-#include <list>
 #include <vector>
 #include <map>
 #include <math.h>
-#include <numeric>
-
-#define DEBUG true
 
 template<typename T = int16_t>
 class DTMFDecoder
