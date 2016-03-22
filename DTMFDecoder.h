@@ -73,7 +73,10 @@ class DTMFDecoder
       {
           windowFunctionTable_.resize(framesCount_);
           for (size_t i = 0; i < framesCount_; ++i) {
-            windowFunctionTable_[i] = 0.42 - 0.5 * cos(2.0 * M_PI * i / (framesCount_ - 1)) + 0.08 * cos(4.0 * M_PI * i / (framesCount_ - 1));
+            windowFunctionTable_[i] = (0.42
+                                        - 0.5 * cos(2.0 * M_PI * i / (framesCount_ - 1))
+                                        + 0.08 * cos(4.0 * M_PI * i / (framesCount_ - 1)))
+                                      / (pow(2, sizeof(T) * 8 - 1) - 1);
           }
       }
 
@@ -139,7 +142,7 @@ class DTMFDecoder
           if (windowFrames_.size() >= framesCount_) {
               std::vector<double> resultedFrames(framesCount_);
               for (size_t i = 0; i < framesCount_; ++i) {
-                resultedFrames[i] = windowFunctionTable_[i] * (double)windowFrames_[i] / 0x7fff;
+                resultedFrames[i] = windowFunctionTable_[i] * windowFrames_[i];
               }
               Frequency low = getExistsFrequency(resultedFrames, kLowFreqs_),
                         high = getExistsFrequency(resultedFrames, kHighFreqs_);
