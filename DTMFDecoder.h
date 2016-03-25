@@ -93,20 +93,49 @@ class DTMFDecoder
 
       Frequency getExistsFrequency(const std::vector<double>& frames, const std::vector<Frequency>& frequencies)
       {
-        double max = thresold_;
-        Frequency ret = kUndefinedFrequency;
+        std::map<Frequency, double> stat;
+        double total = 0;
         for (auto f : frequencies) {
-          double mag = 20 * log10(goertzelFunction(f, frames));
-          if (max < mag) {
-            ret = f;
-            max = mag;
+          double mag = 20.0 * log10(goertzelFunction(f, frames));
+          if (mag > thresold_) {
+            stat[f] = mag;
+            total += mag;
+          }
+        }
+        double max = 0.0;
+        Frequency ret = kUndefinedFrequency;
+        for (auto &kv : stat) {
+          kv.second /= total;
+          if (max < kv.second) {
+            max = kv.second;
+            ret = kv.first;
+          }
+        }
+
+        for (auto &kv : stat) {
+          if (kv.first != ret) {
+            max -= kv.second;
+            if (max < 0.0) {
+              return kUndefinedFrequency;
+            }
           }
         }
         return ret;
       }
 
+      void truncateDtmfStatTable(const FrequencyPair* ignore_pair = nullptr)
+      {
+        for (auto& kv : dtmfStatsTable_) {
+          if (ignore_pair && kv.first == *ignore_pair) continue;
+          if (kv.second.duration >= framesCount_) {
+            handler_->OnCodeEnd(this,kv.second.code, kv.second.duration);
+          }
+          kv.second.duration = 0;
+        }
+      }
+
     public:
-      DTMFDecoder(Handler* handler, size_t sampleRate = 8000, size_t windowDurationMilliseconds = 50, double thresold = -59)
+      DTMFDecoder(Handler* handler, size_t sampleRate = 8000, size_t windowDurationMilliseconds = 50, double thresold = -59.0)
         : handler_(handler)
         , sampleRate_(sampleRate)
         , windowDurationMilliseconds_(windowDurationMilliseconds)
@@ -142,16 +171,11 @@ class DTMFDecoder
               }
               Frequency low = getExistsFrequency(resultedFrames, kLowFreqs_),
                         high = getExistsFrequency(resultedFrames, kHighFreqs_);
-
               if (low == kUndefinedFrequency || high == kUndefinedFrequency) {
-                 for (auto& kv : dtmfStatsTable_) {
-                    if (kv.second.duration >= framesCount_) {
-                      handler_->OnCodeEnd(this,kv.second.code, kv.second.duration);
-                    }
-                    kv.second.duration = 0;
-                  }
+                truncateDtmfStatTable();
               } else {
                   auto r = dtmfStatsTable_.find(std::make_pair(low, high));
+                  truncateDtmfStatTable(&r->first);
                   if (!r->second.duration) {
                     handler_->OnCodeBegin(this, r->second.code);
                   }
