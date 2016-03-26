@@ -32,6 +32,7 @@ class DTMFDecoder
       size_t samplesPerMilliseconds_;
       size_t windowDurationMilliseconds_;
       size_t framesCount_;
+      size_t overlapFramesCount_;
       size_t timestamp_;
       double thresold_;
       std::vector<T> windowFrames_;
@@ -69,10 +70,9 @@ class DTMFDecoder
       {
           windowFunctionTable_.resize(framesCount_);
           for (size_t i = 0; i < framesCount_; ++i) {
-            windowFunctionTable_[i] = (0.42
-                                        - 0.5 * cos(2.0 * M_PI * i / (framesCount_ - 1))
-                                        + 0.08 * cos(4.0 * M_PI * i / (framesCount_ - 1)))
-                                      / (pow(2, sizeof(T) * 8 - 1) - 1);
+            windowFunctionTable_[i] = (0.42 - 0.5 * cos(2.0 * M_PI * i / (framesCount_ - 1)) + 0.08 * cos(4.0 * M_PI * i / (framesCount_ - 1)))
+                                      /
+                                      (pow(2, sizeof(T) * 8 - 1) - 1);
           }
       }
 
@@ -93,31 +93,13 @@ class DTMFDecoder
 
       Frequency getExistsFrequency(const std::vector<double>& frames, const std::vector<Frequency>& frequencies)
       {
-        std::map<Frequency, double> stat;
-        double total = 0;
-        for (auto f : frequencies) {
-          double mag = 20.0 * log10(goertzelFunction(f, frames));
-          if (mag > thresold_) {
-            stat[f] = mag;
-            total += mag;
-          }
-        }
-        double max = 0.0;
+        double max = thresold_;
         Frequency ret = kUndefinedFrequency;
-        for (auto &kv : stat) {
-          kv.second /= total;
-          if (max < kv.second) {
-            max = kv.second;
-            ret = kv.first;
-          }
-        }
-
-        for (auto &kv : stat) {
-          if (kv.first != ret) {
-            max -= kv.second;
-            if (max < 0.0) {
-              return kUndefinedFrequency;
-            }
+        for (auto f : frequencies) {
+          double mag = 20.0 * log10(goertzelFunction(f , frames));
+          if (mag > max) {
+            max = mag;
+            ret = f;
           }
         }
         return ret;
@@ -135,14 +117,18 @@ class DTMFDecoder
       }
 
     public:
-      DTMFDecoder(Handler* handler, size_t sampleRate = 8000, size_t windowDurationMilliseconds = 50, double thresold = -59.0)
+      DTMFDecoder(Handler* handler, size_t sampleRate = 8000, size_t windowDurationMilliseconds = 50, size_t windowOverlapMilliseconds = 10, double thresold = -59.0)
         : handler_(handler)
         , sampleRate_(sampleRate)
         , windowDurationMilliseconds_(windowDurationMilliseconds)
         , thresold_(thresold)
       {
+          if (windowOverlapMilliseconds > windowDurationMilliseconds_) {
+            windowOverlapMilliseconds = windowDurationMilliseconds_;
+          }
           samplesPerMilliseconds_ = sampleRate_ / 1000;
           framesCount_ = samplesPerMilliseconds_* windowDurationMilliseconds_;
+          overlapFramesCount_ = samplesPerMilliseconds_ * windowOverlapMilliseconds;
           windowFrames_.reserve(framesCount_);
 
           createWindowFunctionTable();
@@ -171,19 +157,22 @@ class DTMFDecoder
               }
               Frequency low = getExistsFrequency(resultedFrames, kLowFreqs_),
                         high = getExistsFrequency(resultedFrames, kHighFreqs_);
+
               if (low == kUndefinedFrequency || high == kUndefinedFrequency) {
                 truncateDtmfStatTable();
               } else {
                   auto r = dtmfStatsTable_.find(std::make_pair(low, high));
                   truncateDtmfStatTable(&r->first);
-                  if (!r->second.duration) {
+                  auto duration = r->second.duration;
+                  r->second.duration += overlapFramesCount_;
+                  if (duration < framesCount_ && r->second.duration >= framesCount_) {
                     handler_->OnCodeBegin(this, r->second.code);
+                  } else if (r->second.duration % framesCount_ == 0) {
+                    handler_->OnCode(this, r->second.code, r->second.duration / samplesPerMilliseconds_);
                   }
-                  r->second.duration += framesCount_;
-                  handler_->OnCode(this, r->second.code, r->second.duration / samplesPerMilliseconds_);
               }
 
-              windowFrames_.erase(windowFrames_.begin(), windowFrames_.begin() + framesCount_);
+              windowFrames_.erase(windowFrames_.begin(), windowFrames_.begin() + overlapFramesCount_);
           }
           timestamp_ += len;
         }
